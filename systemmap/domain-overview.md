@@ -24,7 +24,7 @@ last_verified: 2026-08-08
 - `bbs-go` 是一个轻量级社区/问答平台（Go 后端 + Web 前端），上游主仓库为 `mlogclub/bbs-go`。
 - **本地协作模型为 fork 工作流**：
   - `origin` = 上游 `https://github.com/mlogclub/bbs-go.git`（只读，PR 目标）
-  - `fork` = 自有仓库 `https://github.com/aishangwuji/bbs-go.git`（日常开发与 CI/CD 触发源）
+  - `fork` = 自有仓库 `https://github.com/creeper-scr/bbs-vivalavita.git`（日常开发与 CI/CD 触发源）
 - **生产环境只从 fork 拉取部署**，不直接使用上游镜像。
 - 服务器上的源码检出：`/opt/bbs-go/repo/`（remote 指向 fork）。
 
@@ -40,21 +40,22 @@ last_verified: 2026-08-08
 ## 三、CI/CD 与部署模型（2026-08-08 起）
 
 - **构建在 GitHub Actions 云端完成，服务器不再本地编译**（2核4G 撑不住 `docker build`）。
-- 触发：push 到 fork 的 `master` 分支 → `.github/workflows/docker-image.yml` → 多阶段 Dockerfile 构建 → 推送 GHCR。
-- 镜像：`ghcr.io/aishangwuji/bbs-go:latest` + `sha-<commit>`（仓库为 PUBLIC，服务器可匿名拉取）。
-- 服务器部署：`bash /opt/bbs-go/repo/deploy/remote-deploy.sh`（pull → 校验 compose → 重建 → 健康检查）。
-- 回滚：`docker pull ghcr.io/aishangwuji/bbs-go:sha-<commit>` + `docker compose -f /opt/bbs-go/docker-compose.yml up -d --no-deps`。
+- 触发：push 到 fork 的 `master` 分支 → `.github/workflows/docker-image.yml` → 多阶段 Dockerfile 构建 → **只推 GHCR**（不再推 Docker Hub，无需 Docker Hub 变量/密钥）。
+- 镜像：`ghcr.io/creeper-scr/bbs-vivalavita:latest` + `sha-<commit>`（包需在 GitHub 包设置里改为 Public，服务器可匿名拉取；保持 Private 则服务器 `docker login ghcr.io` + PAT `read:packages`）。
+- 服务器部署：`bash /opt/bbs-go/repo/deploy/remote-deploy.sh`（pull → 校验 compose → 重建 → 健康检查）；镜像可用 `BBSGO_IMAGE` 覆盖。
+- 回滚：`docker pull ghcr.io/creeper-scr/bbs-vivalavita:sha-<commit>` + `docker compose -f /opt/bbs-go/docker-compose.yml up -d --no-deps`。
 - 服务器架构细节（nginx SNI 分流、端口、证书等）：见服务器 `/opt/server-architecture.md`（每次改动服务器服务必须同步更新）。
 - 完整流程说明已写入仓库 `README.md` / `README.en-US.md`。
 
 ### 3.1 fork 与上游的 CI/CD 关系（2026-08-08 merge 后）
 
 - 已 merge 上游 15 个提交，**无冲突**，自动合并 23 个文件。
-- merge 后保留三个 workflow：
-  - `docker-image.yml`：**我们的 GHCR 自动版**（push master 触发，merge 时 git 自动保留了 fork 版本，未被上游覆盖）——核心流水线。
-  - `ghcr.yml`：上游手动触发版（workflow_dispatch，可指定 tag 构建多版本）——保留，与自动版不冲突。
+- merge 后保留两个 workflow：
+  - `docker-image.yml`：**我们的 GHCR 自动版**（push master 触发，仅推 GHCR；merge 时 git 自动保留了 fork 版本，未被上游覆盖）——核心流水线。
   - `main.yml`：上游跨平台二进制发布版（打 v* tag 触发，发布 tar.gz 到 GitHub Release）——保留，供终端用户装包，不影响服务器部署。
+  - 上游的 `ghcr.yml` 已不在仓库中，GHCR 推送由 `docker-image.yml` 负责。
 - **决策**：上游无 push-master 自动推 GHCR 的 workflow，因此我们的自动流水线不可被上游替代。merge 后必须保留 fork 版 `docker-image.yml`，否则 CI 失联、服务器无法自动部署。
+- **注意**：Actions 在新 fork 上默认未启用，需在 Actions 页点击启用一次（`.github/workflows` 未注册时 `gh run list` 为空）。
 - merge 带入的上游新能力：通用 S3 兼容存储（`internal/pkg/uploader/s3_uploader.go`，支持 R2/MinIO/RustFS）、帖子审核开关（`SysConfigService.IsTopicPending`）、Makefile 打包目标、web/embed 路由优化、安装中间件专用状态码。
 
 ## 四、业务规则与已修复问题（本 fork 特有）

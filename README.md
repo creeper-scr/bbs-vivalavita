@@ -44,7 +44,7 @@ docker compose up -d
 
 ## CI/CD 与自动化部署
 
-本项目使用 **GitHub Actions + GHCR（GitHub Container Registry）+ Docker Hub** 实现自动化构建与部署，避免在低配服务器上本地编译（2核4G 下 `docker build` 容易资源不足）。
+本项目使用 **GitHub Actions + GHCR（GitHub Container Registry）** 实现自动化构建与部署：镜像只推送 GHCR，VPS 直接拉取运行，避免在低配服务器上本地编译（2核4G 下 `docker build` 容易资源不足）。
 
 ### 工作流说明
 
@@ -52,7 +52,7 @@ docker compose up -d
 |------|------|
 | 触发时机 | 推送代码到 `master` 分支或推送 `v*` 版本 tag 时触发构建 |
 | 构建位置 | GitHub Actions 云端（ubuntu-latest，复用根目录 `Dockerfile` 多阶段构建） |
-| 产物去向 | 同时推送至 GHCR 和 Docker Hub；版本 tag `v4.4.5` 会生成 `v4.4.5`、`4.4.5` 和 `latest` |
+| 产物去向 | 仅推送 GHCR `ghcr.io/creeper-scr/bbs-vivalavita`；分支构建生成 `latest` 和 `sha-<commit>`，版本 tag `v4.4.5` 另生成 `v4.4.5`、`4.4.5` |
 | 服务器部署 | 不构建，直接 `docker compose pull && up` 拉取镜像 |
 
 ### 推送并自动构建
@@ -61,7 +61,9 @@ docker compose up -d
 git push origin master
 ```
 
-推送后可在仓库 Actions 页查看构建进度，绿勾表示镜像已推送到 GHCR 和 Docker Hub。
+推送后可在仓库 Actions 页查看构建进度，绿勾表示镜像已推送到 GHCR。
+
+首次推送后 GHCR 中的包默认是 **Private**。若 VPS 需要免登录拉取，到 `GitHub → Packages → bbs-vivalavita → Package settings → Change visibility` 改为 Public；保持 Private 时则需在 VPS 上 `docker login ghcr.io`（PAT 勾选 `read:packages`）。
 
 ### 服务器上线部署（手动触发，可控可回滚）
 
@@ -72,13 +74,13 @@ git push origin master
 bash /opt/bbs-go/repo/deploy/remote-deploy.sh
 ```
 
-脚本会依次完成：拉取镜像 → 校验 compose → 重建容器 → 健康检查（最多 90 秒），失败时输出容器日志便于排查。对应服务器上的 compose 文件为 `/opt/bbs-go/docker-compose.yml`（镜像已指向 `ghcr.io/<owner>/bbs-go:latest`）。
+脚本会依次完成：拉取镜像 → 校验 compose → 重建容器 → 健康检查（最多 90 秒），失败时输出容器日志便于排查。对应服务器上的 compose 文件为 `/opt/bbs-go/docker-compose.yml`（镜像指向 `ghcr.io/creeper-scr/bbs-vivalavita:latest`）。
 
 ### 回滚
 
 ```bash
 # 服务器上执行：拉取上一个可用镜像 tag 并重建
-docker pull ghcr.io/<owner>/bbs-go:sha-<上一个正常 commit>
+docker pull ghcr.io/creeper-scr/bbs-vivalavita:sha-<上一个正常 commit>
 docker compose -f /opt/bbs-go/docker-compose.yml up -d --no-deps
 ```
 

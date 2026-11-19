@@ -50,7 +50,7 @@ For production deployment options, environment variables, upgrades, and troubles
 
 ## CI/CD and Automated Deployment
 
-This project uses **GitHub Actions + GHCR (GitHub Container Registry) + Docker Hub** for automated build and deployment, avoiding local compilation on low-spec servers (a 2-core/4G box often runs out of resources during `docker build`).
+This project uses **GitHub Actions + GHCR (GitHub Container Registry)** for automated build and deployment: images are pushed only to GHCR and pulled directly by the VPS, avoiding local compilation on low-spec servers (a 2-core/4G box often runs out of resources during `docker build`).
 
 ### Pipeline Overview
 
@@ -58,7 +58,7 @@ This project uses **GitHub Actions + GHCR (GitHub Container Registry) + Docker H
 |-------|-------------|
 | Trigger | Pushing code to `master` or a `v*` version tag triggers the build |
 | Build location | GitHub Actions cloud (ubuntu-latest), reusing the multi-stage `Dockerfile` at repo root |
-| Artifact | Pushed to both GHCR and Docker Hub; version tag `v4.4.5` produces `v4.4.5`, `4.4.5`, and `latest` |
+| Artifact | Pushed only to GHCR `ghcr.io/creeper-scr/bbs-vivalavita`; branch builds produce `latest` and `sha-<commit>`, version tag `v4.4.5` additionally produces `v4.4.5` and `4.4.5` |
 | Server deploy | No build on server; just `docker compose pull && up` |
 
 ### Push and auto-build
@@ -67,7 +67,9 @@ This project uses **GitHub Actions + GHCR (GitHub Container Registry) + Docker H
 git push origin master
 ```
 
-Watch the Actions tab for build progress. A green checkmark means the image is on both GHCR and Docker Hub.
+Watch the Actions tab for build progress. A green checkmark means the image is on GHCR.
+
+The GHCR package is **private** after the first push. For login-free pulls on the VPS, set `GitHub → Packages → bbs-vivalavita → Package settings → Change visibility` to Public; otherwise run `docker login ghcr.io` on the VPS with a PAT that has `read:packages`.
 
 ### Deploy on the server (manual trigger, controllable and rollback-able)
 
@@ -76,13 +78,13 @@ Watch the Actions tab for build progress. A green checkmark means the image is o
 bash /opt/bbs-go/repo/deploy/remote-deploy.sh
 ```
 
-The script runs: pull image → validate compose → recreate container → health check (up to 90s), printing container logs on failure. The server compose file is `/opt/bbs-go/docker-compose.yml` (image points to `ghcr.io/<owner>/bbs-go:latest`).
+The script runs: pull image → validate compose → recreate container → health check (up to 90s), printing container logs on failure. The server compose file is `/opt/bbs-go/docker-compose.yml` (image points to `ghcr.io/creeper-scr/bbs-vivalavita:latest`).
 
 ### Rollback
 
 ```bash
 # On the server: pull a previous image tag and recreate
-docker pull ghcr.io/<owner>/bbs-go:sha-<previous-good-commit>
+docker pull ghcr.io/creeper-scr/bbs-vivalavita:sha-<previous-good-commit>
 docker compose -f /opt/bbs-go/docker-compose.yml up -d --no-deps
 ```
 

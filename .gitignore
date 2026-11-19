@@ -58,3 +58,6 @@ AGENTS.md
 .env
 .env.*
 !.env.example
+
+# docker-compose 容器运行时数据（root 创建，含数据库/上传/日志，勿提交）
+docker-data-postgresql/
