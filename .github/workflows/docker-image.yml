@@ -23,6 +23,11 @@ permissions:
 env:
   IMAGE: ghcr.io/${{ github.repository }}
 
+# 同一分支连续推送时取消旧构建，避免排队和旧镜像后完成覆盖 latest
+concurrency:
+  group: docker-image-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     name: Build and push Docker image
@@ -31,9 +36,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v7
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v4
-
+      # 只构建 linux/amd64，不需要 QEMU 模拟
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -67,3 +70,7 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          # 缓存 pnpm install、Go modules、编译产物等中间层。
+          # 首次冷构建仍约 3 分钟，之后只重建改动层。
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

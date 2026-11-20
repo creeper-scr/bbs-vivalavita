@@ -44,44 +44,98 @@ docker compose up -d
 
 ## CI/CD 与自动化部署
 
-本项目使用 **GitHub Actions + GHCR（GitHub Container Registry）** 实现自动化构建与部署：镜像只推送 GHCR，VPS 直接拉取运行，避免在低配服务器上本地编译（2核4G 下 `docker build` 容易资源不足）。
-
-### 工作流说明
+构建在 GitHub Actions 云端完成，香港服务器只拉取镜像运行，不在服务器上编译（2核4G 上 `docker build` 容易资源不足）。
 
 | 环节 | 说明 |
 |------|------|
-| 触发时机 | 推送代码到 `master` 分支或推送 `v*` 版本 tag 时触发构建 |
-| 构建位置 | GitHub Actions 云端（ubuntu-latest，复用根目录 `Dockerfile` 多阶段构建） |
-| 产物去向 | 仅推送 GHCR `ghcr.io/creeper-scr/bbs-vivalavita`；分支构建生成 `latest` 和 `sha-<commit>`，版本 tag `v4.4.5` 另生成 `v4.4.5`、`4.4.5` |
-| 服务器部署 | 不构建，直接 `docker compose pull && up` 拉取镜像 |
+| 触发时机 | 推送代码到 `master` 分支、推送 `v*` 版本 tag，或手动 `workflow_dispatch` |
+| 构建位置 | GitHub Actions（ubuntu-latest，复用根目录 `Dockerfile` 多阶段构建） |
+| 产物去向 | GHCR `ghcr.io/creeper-scr/bbs-vivalavita`：分支构建生成 `latest` 和 `sha-<short-commit>`，版本 tag 另生成 `v4.4.5`、`4.4.5` |
+| 服务器部署 | 不构建，拉取镜像后只重建 `bbs-go` 容器 |
+| 数据 | PostgreSQL 命名卷 + `/opt/bbs-go/docker-data-postgresql/` 宿主机目录，更新时原样保留 |
 
-### 推送并自动构建
+### 1. 推送代码，自动构建镜像
 
 ```bash
 git push origin master
 ```
 
-推送后可在仓库 Actions 页查看构建进度，绿勾表示镜像已推送到 GHCR。
+在仓库 Actions 页等待构建绿勾，GHCR 中的 `latest` 即更新。工作流已启用 Buildx 的 GHA 层缓存：首次冷构建约 3 分钟，之后只重建改动层。
 
-首次推送后 GHCR 中的包默认是 **Private**。若 VPS 需要免登录拉取，到 `GitHub → Packages → bbs-vivalavita → Package settings → Change visibility` 改为 Public；保持 Private 时则需在 VPS 上 `docker login ghcr.io`（PAT 勾选 `read:packages`）。
+GHCR 仓库当前是 **Public**，服务器可匿名拉取。若以后改为 Private，需在服务器执行一次 `docker login ghcr.io`（PAT 勾选 `read:packages`）。
 
-### 服务器上线部署（手动触发，可控可回滚）
+### 2. 服务器首次上线（只做一次）
 
-服务器拉取最新镜像并重建容器：
+服务器需已安装 Docker 与 `docker compose` 插件。以下命令在服务器上执行：
 
 ```bash
-# 服务器上执行（首次或每次发布）
-bash /opt/bbs-go/repo/deploy/remote-deploy.sh
+sudo mkdir -p /opt/bbs-go
+sudo git clone https://github.com/creeper-scr/bbs-vivalavita.git /opt/bbs-go/repo
+sudo cp /opt/bbs-go/repo/deploy/docker-compose.yml /opt/bbs-go/docker-compose.yml
+sudo cp /opt/bbs-go/repo/deploy/env.example /opt/bbs-go/.env
+sudo vi /opt/bbs-go/.env          # 设置数据库强密码；数据库卷初始化后不可再改
+# 当前 GHCR 包为 Public，可跳过登录；若改回 Private 再执行：
+# echo "$PAT" | sudo docker login ghcr.io -u creeper-scr --password-stdin
+
+sudo bash /opt/bbs-go/repo/deploy/remote-deploy.sh
 ```
 
-脚本会依次完成：拉取镜像 → 校验 compose → 重建容器 → 健康检查（最多 90 秒），失败时输出容器日志便于排查。对应服务器上的 compose 文件为 `/opt/bbs-go/docker-compose.yml`（镜像指向 `ghcr.io/creeper-scr/bbs-vivalavita:latest`）。
-
-### 回滚
+脚本首次运行会启动 PostgreSQL 与 bbs-go 并等待健康检查通过。然后访问 `http://<服务器IP>:3000/install` 完成安装向导；安装令牌在：
 
 ```bash
-# 服务器上执行：拉取上一个可用镜像 tag 并重建
-docker pull ghcr.io/creeper-scr/bbs-vivalavita:sha-<上一个正常 commit>
-docker compose -f /opt/bbs-go/docker-compose.yml up -d --no-deps
+sudo cat /opt/bbs-go/docker-data-postgresql/data/setup-token.txt
+```
+
+安装完成后 `installed: true` 会写入 `/opt/bbs-go/docker-data-postgresql/data/bbs-go.yaml`，此后不会再进入安装流程。数据目录（`data/`、`logs/`、`uploads/`）由容器首次启动时创建在 `/opt/bbs-go/docker-data-postgresql/` 下。
+
+### 3. 日常更新（一行命令）
+
+推送代码并等 Actions 构建完成后，在服务器执行：
+
+```bash
+sudo bash /opt/bbs-go/repo/deploy/remote-deploy.sh
+```
+
+脚本依次完成：校验 compose → 拉取 `${BBSGO_IMAGE:-latest}` → 只重建 `bbs-go` 容器（首次部署才连同 PostgreSQL 一起启动）→ 健康检查（最多 90 秒），失败时输出容器日志。PostgreSQL 容器、数据卷和宿主机目录都不会被改动，因此用户、帖子、上传文件与安装状态都保留，不会重新出现安装向导。
+
+只有部署脚本本身更新时才需要 `sudo git -C /opt/bbs-go/repo pull --ff-only`；日常发布不必拉代码。
+
+### 4. 回滚
+
+```bash
+# 用上一个正常构建的镜像 tag 重新部署（tag 可在 GHCR 包版本或 Actions 记录中找到）
+sudo BBSGO_IMAGE=ghcr.io/creeper-scr/bbs-vivalavita:sha-<short-commit> \
+  bash /opt/bbs-go/repo/deploy/remote-deploy.sh
+
+# 回到最新版本
+sudo bash /opt/bbs-go/repo/deploy/remote-deploy.sh
+```
+
+### 5. 数据保存位置
+
+| 数据 | 位置 | 更新/重建容器 |
+|------|------|---------------|
+| 用户、帖子、评论、系统配置 | Docker 卷 `bbs-go_postgresql-data` | 保留 |
+| 安装状态、`idCodec` 密钥 | `/opt/bbs-go/docker-data-postgresql/data/bbs-go.yaml` | 保留 |
+| 上传的图片/附件 | `/opt/bbs-go/docker-data-postgresql/uploads` | 保留 |
+| 运行日志 | `/opt/bbs-go/docker-data-postgresql/logs` | 保留 |
+
+`deploy/docker-compose.yml` 顶层写了 `name: bbs-go`，卷名不会因目录改名而漂移。
+
+### 6. 会丢数据或重新触发安装的操作
+
+- `docker compose down -v`、`docker volume rm bbs-go_postgresql-data`、`docker system prune --volumes`：删除数据库卷。
+- 删除或替换 `/opt/bbs-go/docker-data-postgresql`：丢失安装配置和上传文件，下次启动会重新生成 `installed: false` 的配置并进入安装流程。
+- 数据库卷初始化后再修改 `.env` 中的 `BBSGO_DOCKER_POSTGRESQL_*`：应用按新密码连库会失败；需先在 PostgreSQL 内改密码。
+- 把 `docker-compose.yml` 移到另一个目录后重新 `up`：相对路径 `./docker-data-postgresql` 指向新目录，等于空安装。
+
+备份数据库与文件：
+
+```bash
+# 用户名/库名按 /opt/bbs-go/.env 中的配置调整
+sudo docker exec bbs-go-postgresql pg_dump -U bbsgo bbsgo | gzip > /opt/bbs-go/backup-db-$(date +%F).sql.gz
+sudo tar czf /opt/bbs-go/backup-files-$(date +%F).tar.gz \
+  -C /opt/bbs-go docker-data-postgresql/data docker-data-postgresql/uploads
 ```
 
 ## 为什么选择 bbs-go
