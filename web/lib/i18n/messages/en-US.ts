@@ -463,6 +463,7 @@ const enUS = {
         smtp: {
           host: "Host",
           port: "Port",
+          from: "From",
           username: "Username",
           password: "Password",
           ssl: "SSL",

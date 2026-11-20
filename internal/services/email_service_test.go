@@ -11,6 +11,32 @@ import (
 	"testing"
 )
 
+func TestResolveSmtpFrom(t *testing.T) {
+	tests := []struct {
+		name     string
+		from     string
+		username string
+		want     string
+		wantErr  bool
+	}{
+		{"falls back to username", "", "a@example.com", "a@example.com", false},
+		{"explicit from wins", "noreply@mail.example.com", "api_token", "noreply@mail.example.com", false},
+		{"non-email username without from", "", "api_token", "", true},
+		{"invalid from", "not-an-email", "a@example.com", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := resolveSmtpFrom(tt.from, tt.username)
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("err=%v wantErr=%v", err, tt.wantErr)
+			}
+			if got != tt.want {
+				t.Fatalf("got %q want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSmtpTLSConfig_VerifiesServerCertificate(t *testing.T) {
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	server.Config.ErrorLog = log.New(io.Discard, "", 0)

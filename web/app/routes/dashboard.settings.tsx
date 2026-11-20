@@ -1834,7 +1834,7 @@ function NotificationSettings({
       </div>
 
       <SectionTitle>{s("notification.smtpSectionTitle")}</SectionTitle>
-      {(["host", "port", "username", "password"] as const).map((key) => (
+      {(["host", "port", "from", "username", "password"] as const).map((key) => (
         <Field key={key} label={s(`notification.smtp.${key}`)}>
           <Input
             className={key === "port" ? "max-w-44" : undefined}

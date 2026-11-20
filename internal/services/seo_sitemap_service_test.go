@@ -23,6 +23,24 @@ func TestBuildSitemapXML_EscapesURLs(t *testing.T) {
 	}
 }
 
+func TestAbsoluteSitemapLoc(t *testing.T) {
+	tests := []struct {
+		baseURL string
+		loc     string
+		want    string
+	}{
+		{"https://viva-la-vita.dev", "/res/uploads/seo/sitemap-static-1.xml", "https://viva-la-vita.dev/res/uploads/seo/sitemap-static-1.xml"},
+		{"https://viva-la-vita.dev/", "res/uploads/seo/sitemap-static-1.xml", "https://viva-la-vita.dev/res/uploads/seo/sitemap-static-1.xml"},
+		{"https://viva-la-vita.dev", "https://cdn.example.com/seo/sitemap-static-1.xml", "https://cdn.example.com/seo/sitemap-static-1.xml"},
+		{"/", "/res/uploads/seo/sitemap-static-1.xml", "/res/uploads/seo/sitemap-static-1.xml"},
+	}
+	for _, tt := range tests {
+		if got := absoluteSitemapLoc(tt.baseURL, tt.loc); got != tt.want {
+			t.Fatalf("absoluteSitemapLoc(%q, %q) = %q, want %q", tt.baseURL, tt.loc, got, tt.want)
+		}
+	}
+}
+
 func TestBuildSitemapIndexXML_UsesUploadedChildURLs(t *testing.T) {
 	xml := buildSitemapIndexXML([]sitemapIndexItem{{Loc: "https://cdn.example.com/seo/sitemap-static.xml", LastMod: "2026-05-18"}, {Loc: "https://cdn.example.com/seo/sitemap-topics-1.xml", LastMod: "2026-05-18"}})
 	for _, expected := range []string{

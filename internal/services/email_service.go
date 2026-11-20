@@ -10,8 +10,10 @@ import (
 	"bytes"
 	"crypto/tls"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
+	"net/mail"
 	"net/smtp"
 	"strings"
 	"text/template"
@@ -96,21 +98,24 @@ func (s *emailService) sendEmail(to string, subject, html string, bizType string
 		tlsConfig = smtpTLSConfig(host)
 	)
 
+	sender, fromErr := resolveSmtpFrom(smtpConfig.From, username)
+
 	e := email.NewEmail()
-	e.From = username
+	e.From = sender
 	e.To = []string{to}
 	e.Subject = subject
 	e.HTML = []byte(html)
 
 	sendErr := error(nil)
-	if configErr == nil {
-		if ssl {
-			sendErr = e.SendWithTLS(addr, auth, tlsConfig)
-		} else {
-			sendErr = e.Send(addr, auth)
-		}
-	} else {
+	switch {
+	case configErr != nil:
 		sendErr = configErr
+	case fromErr != nil:
+		sendErr = fromErr
+	case ssl:
+		sendErr = e.SendWithTLS(addr, auth, tlsConfig)
+	default:
+		sendErr = e.Send(addr, auth)
 	}
 
 	if bizType == "" {
@@ -139,6 +144,21 @@ func (s *emailService) sendEmail(to string, subject, html string, bizType string
 		return sendErr
 	}
 	return nil
+}
+
+// resolveSmtpFrom returns the sender address used in the From header. Providers
+// such as Cloudflare Email Sending use a non-email SMTP username ("api_token"),
+// so the sender must be configurable separately.
+func resolveSmtpFrom(from, username string) (string, error) {
+	addr := strings.TrimSpace(from)
+	if addr == "" {
+		addr = strings.TrimSpace(username)
+	}
+	parsed, err := mail.ParseAddress(addr)
+	if err != nil {
+		return "", fmt.Errorf("invalid SMTP from address %q: %w", addr, err)
+	}
+	return parsed.Address, nil
 }
 
 func smtpTLSConfig(host string) *tls.Config {

@@ -337,6 +337,25 @@ func (s *seoSitemapService) buildArticleSitemapFiles() ([]generatedSitemapFile, 
 	return files, nil
 }
 
+func isAbsoluteURL(raw string) bool {
+	return strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://")
+}
+
+func absoluteSitemapLoc(baseURL, loc string) string {
+	loc = strings.TrimSpace(loc)
+	if loc == "" || isAbsoluteURL(loc) {
+		return loc
+	}
+	baseURL = strings.TrimSpace(baseURL)
+	if baseURL == "" || baseURL == "/" {
+		return loc
+	}
+	if !strings.HasPrefix(loc, "/") {
+		loc = "/" + loc
+	}
+	return strings.TrimRight(baseURL, "/") + loc
+}
+
 func buildSitemapIndexXML(items []sitemapIndexItem) string {
 	sitemaps := make([]sitemapIndexItem, 0, len(items))
 	for _, item := range items {
@@ -419,6 +438,10 @@ func uploadSitemapFiles(client sitemapUploadClient, files []generatedSitemapFile
 		url, err := client.PutObject(key, []byte(file.XML), sitemapContentType)
 		if err != nil {
 			return "", err
+		}
+		// Local uploads return a relative URL; sitemap index loc entries must be absolute.
+		if !isAbsoluteURL(url) {
+			url = absoluteSitemapLoc(SysConfigService.GetBaseURL(), url)
 		}
 		indexItems = append(indexItems, sitemapIndexItem{
 			Loc:     url,

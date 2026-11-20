@@ -454,6 +454,7 @@ const zhCN = {
         smtp: {
           host: "Host",
           port: "Port",
+          from: "发件人 (From)",
           username: "Username",
           password: "Password",
           ssl: "SSL",

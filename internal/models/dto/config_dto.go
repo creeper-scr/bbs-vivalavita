@@ -236,6 +236,7 @@ type SmtpConfig struct {
 	Port     string `json:"port"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+	From     string `json:"from"` // 发件人地址；为空时回退到 Username
 	SSL      bool   `json:"ssl"`
 }
 
