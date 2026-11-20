@@ -60,25 +60,39 @@ docker compose up -d
 git push origin master
 ```
 
-在仓库 Actions 页等待构建绿勾，GHCR 中的 `latest` 即更新。工作流已启用 Buildx 的 GHA 层缓存：首次冷构建约 3 分钟，之后只重建改动层。
+在仓库 Actions 页等待构建绿勾，GHCR 中的 `latest` 即更新。工作流已启用 Buildx 的 GHA 层缓存：首次冷构建约 3 分钟（Public 仓库的 4 vCPU runner），之后只重建改动层。
 
-GHCR 仓库当前是 **Public**，服务器可匿名拉取。若以后改为 Private，需在服务器执行一次 `docker login ghcr.io`（PAT 勾选 `read:packages`）。
+仓库为 Private 时，GitHub 使用 **2 vCPU / 8 GB** 的标准 runner，并消耗套餐包含的 Actions 分钟数，构建会比 Public 仓库慢一些；CI 推送镜像使用 `GITHUB_TOKEN`，不需要额外 PAT。
+
+镜像包与源码仓库的可见性相互独立：当前 GHCR 包是 **Public**，服务器仍可匿名拉取。若包被改为 Private，在服务器执行一次 `docker login ghcr.io`（PAT 勾选 `read:packages`）即可。
 
 ### 2. 服务器首次上线（只做一次）
 
-服务器需已安装 Docker 与 `docker compose` 插件。以下命令在服务器上执行：
+仓库是 Private，服务器**不需要 clone 源码**，只复制部署文件。服务器需已安装 Docker 与 `docker compose` 插件。
+
+在**本机**执行（把 `root@SERVER` 换成你的 SSH 登录）：
 
 ```bash
-sudo mkdir -p /opt/bbs-go
-sudo git clone https://github.com/creeper-scr/bbs-vivalavita.git /opt/bbs-go/repo
-sudo cp /opt/bbs-go/repo/deploy/docker-compose.yml /opt/bbs-go/docker-compose.yml
-sudo cp -r /opt/bbs-go/repo/deploy/caddy /opt/bbs-go/caddy
-sudo cp /opt/bbs-go/repo/deploy/env.example /opt/bbs-go/.env
-sudo vi /opt/bbs-go/.env   # 设置数据库强密码与 BBSGO_DOMAIN；数据库卷初始化后密码不可再改
-# 当前 GHCR 包为 Public，可跳过登录；若改回 Private 再执行：
-# echo "$PAT" | sudo docker login ghcr.io -u creeper-scr --password-stdin
+ssh root@SERVER 'mkdir -p /opt/bbs-go'
+scp deploy/docker-compose.yml root@SERVER:/opt/bbs-go/docker-compose.yml
+scp -r deploy/caddy root@SERVER:/opt/bbs-go/
+scp deploy/env.example root@SERVER:/opt/bbs-go/.env
+scp deploy/remote-deploy.sh root@SERVER:/opt/bbs-go/remote-deploy.sh
+```
 
-sudo bash /opt/bbs-go/repo/deploy/remote-deploy.sh
+如果 SSH 不是 root，先用 `ubuntu@SERVER` 复制到用户目录，再在服务器上 `sudo mv` 到 `/opt/bbs-go`。
+
+在**服务器**上编辑配置并启动：
+
+```bash
+sudo nano /opt/bbs-go/.env   # 设置数据库强密码与 BBSGO_DOMAIN；数据库卷初始化后密码不可再改
+sudo bash /opt/bbs-go/remote-deploy.sh
+```
+
+GHCR 包当前是 Public，可直接拉取；若改为 Private：
+
+```bash
+echo "$PAT" | sudo docker login ghcr.io -u creeper-scr --password-stdin
 ```
 
 前提：`BBSGO_DOMAIN` 的 A/AAAA 记录已指向服务器，安全组/防火墙放行 **80/tcp、443/tcp、443/udp**。脚本首次运行会启动 PostgreSQL、bbs-go 和 Caddy，并等待 bbs-go 健康检查通过；Caddy 随后自动申请 HTTPS 证书。然后访问 `https://<BBSGO_DOMAIN>/install` 完成安装向导（`3000` 只绑定服务器本机，公网不暴露）；安装令牌在：
@@ -94,12 +108,12 @@ sudo cat /opt/bbs-go/docker-data-postgresql/data/setup-token.txt
 推送代码并等 Actions 构建完成后，在服务器执行：
 
 ```bash
-sudo bash /opt/bbs-go/repo/deploy/remote-deploy.sh
+sudo bash /opt/bbs-go/remote-deploy.sh
 ```
 
 脚本依次完成：校验 compose → 拉取 `${BBSGO_IMAGE:-latest}` → 只重建 `bbs-go` 容器（首次部署才连同 PostgreSQL 一起启动）→ 健康检查（最多 90 秒），失败时输出容器日志。PostgreSQL 容器、数据卷和宿主机目录都不会被改动，因此用户、帖子、上传文件与安装状态都保留，不会重新出现安装向导。
 
-只有部署脚本本身更新时才需要 `sudo git -C /opt/bbs-go/repo pull --ff-only`；日常发布不必拉代码。
+只有部署脚本本身更新时才需要从本机重新 `scp deploy/remote-deploy.sh root@SERVER:/opt/bbs-go/remote-deploy.sh`；日常发布不必传文件。
 
 Caddy 容器只在首次部署时启动，应用更新不会重启它。修改 `/opt/bbs-go/caddy/Caddyfile` 后应用配置：
 
@@ -128,10 +142,10 @@ curl -sI -H 'Accept-Encoding: br' https://<BBSGO_DOMAIN>/ | grep -i '^content-en
 ```bash
 # 用上一个正常构建的镜像 tag 重新部署（tag 可在 GHCR 包版本或 Actions 记录中找到）
 sudo BBSGO_IMAGE=ghcr.io/creeper-scr/bbs-vivalavita:sha-<short-commit> \
-  bash /opt/bbs-go/repo/deploy/remote-deploy.sh
+  bash /opt/bbs-go/remote-deploy.sh
 
 # 回到最新版本
-sudo bash /opt/bbs-go/repo/deploy/remote-deploy.sh
+sudo bash /opt/bbs-go/remote-deploy.sh
 ```
 
 ### 5. 数据保存位置

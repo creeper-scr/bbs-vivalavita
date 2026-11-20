@@ -5,16 +5,17 @@
 # 前提：
 #   - CI（GitHub Actions）已将最新镜像推送到 GHCR：
 #     ghcr.io/creeper-scr/bbs-vivalavita:latest
-#   - 服务器已有 /opt/bbs-go/docker-compose.yml（首次部署时从仓库 deploy/docker-compose.yml 复制）
-#   - GHCR 包已设为 Public 时可匿名拉取；仍为 Private 时先执行：
+#   - 服务器已有 /opt/bbs-go/docker-compose.yml、caddy/Caddyfile 和 .env
+#     （首次部署时从本机 scp deploy/ 下的文件，不需要 clone 私有仓库）
+#   - GHCR 包为 Public 时可匿名拉取；仍为 Private 时先执行：
 #     echo "$PAT" | docker login ghcr.io -u <github-user> --password-stdin
 #
 # 用法：
-#   bash /opt/bbs-go/repo/deploy/remote-deploy.sh
+#   bash /opt/bbs-go/remote-deploy.sh
 #
 # 回滚到某个已构建的 sha tag：
 #   BBSGO_IMAGE=ghcr.io/creeper-scr/bbs-vivalavita:sha-<commit> \
-#     bash /opt/bbs-go/repo/deploy/remote-deploy.sh
+#     bash /opt/bbs-go/remote-deploy.sh
 #
 # 该脚本在服务器上执行（不在 CI 中），由部署者手动触发，保证可控可回滚。
 # 只重建 bbs-go 容器，不触碰 PostgreSQL 容器、命名卷和宿主机数据目录。
