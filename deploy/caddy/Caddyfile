@@ -1,0 +1,9 @@
+# 域名由 /opt/bbs-go/.env 的 BBSGO_DOMAIN 注入；未设置时 compose 会直接报错。
+# Caddy 自动申请/续期 Let's Encrypt 证书，证书保存在 caddy-data 卷中。
+{$BBSGO_DOMAIN} {
+	# br 放在第一位：支持 Brotli 的浏览器优先使用 br。
+	# 其余客户端回退 zstd / gzip。br 级别默认 4。
+	encode br zstd gzip
+
+	reverse_proxy bbs-go:3000
+}

@@ -1,6 +1,7 @@
 # bbs-go 香港服务器生产部署文件。
 #
-# 使用方法：首次部署时复制到 /opt/bbs-go/docker-compose.yml（详见 README「CI/CD 与自动化部署」）。
+# 使用方法：首次部署时复制到 /opt/bbs-go/docker-compose.yml，并把 deploy/caddy/
+# 一并复制到 /opt/bbs-go/caddy/（详见 README「CI/CD 与自动化部署」）。
 # 日常更新由 deploy/remote-deploy.sh 调用，本文件不需要随每次发布修改。
 #
 # 固定项目名，避免因部署目录改名导致 Docker 卷名变化、误连到一个空数据库。
@@ -43,7 +44,8 @@ services:
       - ./docker-data-postgresql/logs:/app/logs
       - ./docker-data-postgresql/uploads:/app/res/uploads
     ports:
-      - "3000:3000"
+      # 只绑定本机，公网流量走 Caddy；调试可 SSH 隧道访问 127.0.0.1:3000
+      - "127.0.0.1:3000:3000"
     environment:
       BBSGO_ENV: prod
       NODE_ENV: production
@@ -57,5 +59,27 @@ services:
       BBSGO_DOCKER_BUILTIN_POSTGRESQL_PASSWORD: ${BBSGO_DOCKER_POSTGRESQL_PASSWORD:-bbsgo_password}
       TZ: Asia/Shanghai
 
+  caddy:
+    # 带 Brotli 模块的 Caddy，由 GitHub Actions 构建到同一个 GHCR 包
+    image: ${CADDY_IMAGE:-ghcr.io/creeper-scr/bbs-vivalavita:caddy}
+    container_name: bbs-go-caddy
+    restart: unless-stopped
+    depends_on:
+      - bbs-go
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    environment:
+      # 必填：在 /opt/bbs-go/.env 中设置，缺失时 compose 直接报错
+      BBSGO_DOMAIN: ${BBSGO_DOMAIN:?set BBSGO_DOMAIN in /opt/bbs-go/.env}
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      # 自动签发的证书与 ACME 账户，重建容器不会重新签发
+      - caddy-data:/data
+      - caddy-config:/config
+
 volumes:
   postgresql-data:
+  caddy-data:
+  caddy-config:

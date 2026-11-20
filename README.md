@@ -72,15 +72,16 @@ GHCR 仓库当前是 **Public**，服务器可匿名拉取。若以后改为 Pri
 sudo mkdir -p /opt/bbs-go
 sudo git clone https://github.com/creeper-scr/bbs-vivalavita.git /opt/bbs-go/repo
 sudo cp /opt/bbs-go/repo/deploy/docker-compose.yml /opt/bbs-go/docker-compose.yml
+sudo cp -r /opt/bbs-go/repo/deploy/caddy /opt/bbs-go/caddy
 sudo cp /opt/bbs-go/repo/deploy/env.example /opt/bbs-go/.env
-sudo vi /opt/bbs-go/.env          # 设置数据库强密码；数据库卷初始化后不可再改
+sudo vi /opt/bbs-go/.env   # 设置数据库强密码与 BBSGO_DOMAIN；数据库卷初始化后密码不可再改
 # 当前 GHCR 包为 Public，可跳过登录；若改回 Private 再执行：
 # echo "$PAT" | sudo docker login ghcr.io -u creeper-scr --password-stdin
 
 sudo bash /opt/bbs-go/repo/deploy/remote-deploy.sh
 ```
 
-脚本首次运行会启动 PostgreSQL 与 bbs-go 并等待健康检查通过。然后访问 `http://<服务器IP>:3000/install` 完成安装向导；安装令牌在：
+前提：`BBSGO_DOMAIN` 的 A/AAAA 记录已指向服务器，安全组/防火墙放行 **80/tcp、443/tcp、443/udp**。脚本首次运行会启动 PostgreSQL、bbs-go 和 Caddy，并等待 bbs-go 健康检查通过；Caddy 随后自动申请 HTTPS 证书。然后访问 `https://<BBSGO_DOMAIN>/install` 完成安装向导（`3000` 只绑定服务器本机，公网不暴露）；安装令牌在：
 
 ```bash
 sudo cat /opt/bbs-go/docker-data-postgresql/data/setup-token.txt
@@ -99,6 +100,28 @@ sudo bash /opt/bbs-go/repo/deploy/remote-deploy.sh
 脚本依次完成：校验 compose → 拉取 `${BBSGO_IMAGE:-latest}` → 只重建 `bbs-go` 容器（首次部署才连同 PostgreSQL 一起启动）→ 健康检查（最多 90 秒），失败时输出容器日志。PostgreSQL 容器、数据卷和宿主机目录都不会被改动，因此用户、帖子、上传文件与安装状态都保留，不会重新出现安装向导。
 
 只有部署脚本本身更新时才需要 `sudo git -C /opt/bbs-go/repo pull --ff-only`；日常发布不必拉代码。
+
+Caddy 容器只在首次部署时启动，应用更新不会重启它。修改 `/opt/bbs-go/caddy/Caddyfile` 后应用配置：
+
+```bash
+sudo docker compose -f /opt/bbs-go/docker-compose.yml exec caddy \
+  caddy reload --config /etc/caddy/Caddyfile
+```
+
+### 3.1 反向代理与 Brotli 压缩
+
+`deploy/docker-compose.yml` 内置 Caddy，负责 HTTPS 与压缩，bbs-go 只监听容器网络和服务器本机的 `127.0.0.1:3000`：
+
+- Caddy 镜像由 GitHub Actions 构建（`ghcr.io/creeper-scr/bbs-vivalavita:caddy`，与主镜像同一个 GHCR 包），官方 `caddy:2` 不含 Brotli，这里通过 `xcaddy` 打入 `github.com/ueffel/caddy-brotli`。
+- Caddyfile 使用 `encode br zstd gzip`：支持 Brotli 的客户端优先 `br`，其余回退 `zstd`/`gzip`。
+- 证书和 ACME 账户保存在 `bbs-go_caddy-data`、`bbs-go_caddy-config` 命名卷，重建容器不会重新签发。
+
+验证响应确实使用 Brotli：
+
+```bash
+curl -sI -H 'Accept-Encoding: br' https://<BBSGO_DOMAIN>/ | grep -i '^content-encoding'
+# 期望：content-encoding: br
+```
 
 ### 4. 回滚
 
@@ -119,12 +142,13 @@ sudo bash /opt/bbs-go/repo/deploy/remote-deploy.sh
 | 安装状态、`idCodec` 密钥 | `/opt/bbs-go/docker-data-postgresql/data/bbs-go.yaml` | 保留 |
 | 上传的图片/附件 | `/opt/bbs-go/docker-data-postgresql/uploads` | 保留 |
 | 运行日志 | `/opt/bbs-go/docker-data-postgresql/logs` | 保留 |
+| Caddy 证书/ACME 账户 | Docker 卷 `bbs-go_caddy-data`、`bbs-go_caddy-config` | 保留 |
 
 `deploy/docker-compose.yml` 顶层写了 `name: bbs-go`，卷名不会因目录改名而漂移。
 
 ### 6. 会丢数据或重新触发安装的操作
 
-- `docker compose down -v`、`docker volume rm bbs-go_postgresql-data`、`docker system prune --volumes`：删除数据库卷。
+- `docker compose down -v`、`docker volume rm bbs-go_postgresql-data`、`docker system prune --volumes`：删除数据库卷；同时会删掉 Caddy 证书卷，触发重新签发（Let's Encrypt 有频率限制）。
 - 删除或替换 `/opt/bbs-go/docker-data-postgresql`：丢失安装配置和上传文件，下次启动会重新生成 `installed: false` 的配置并进入安装流程。
 - 数据库卷初始化后再修改 `.env` 中的 `BBSGO_DOCKER_POSTGRESQL_*`：应用按新密码连库会失败；需先在 PostgreSQL 内改密码。
 - 把 `docker-compose.yml` 移到另一个目录后重新 `up`：相对路径 `./docker-data-postgresql` 指向新目录，等于空安装。

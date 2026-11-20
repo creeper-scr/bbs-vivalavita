@@ -73,13 +73,13 @@ if ! docker pull "${IMAGE}"; then
 fi
 
 # 3. 重建 bbs-go 容器
-# 首次部署时 PostgreSQL 还不存在，必须连同依赖一起启动；之后只重建 bbs-go，
-# 不触碰 PostgreSQL 容器，数据卷和 bind mount 原样保留。
-if [[ -n "$(docker compose -f "${COMPOSE_FILE}" ps -q postgresql)" ]]; then
-  log "重建容器（保留现有 PostgreSQL）"
+# 首次部署（或 Caddy 尚未启动）时必须完整启动；之后只重建 bbs-go，
+# 不触碰 PostgreSQL/Caddy 容器，数据卷和 bind mount 原样保留。
+if [[ -n "$(docker compose -f "${COMPOSE_FILE}" ps -q postgresql)" && -n "$(docker compose -f "${COMPOSE_FILE}" ps -q caddy)" ]]; then
+  log "重建容器（保留现有 PostgreSQL 与 Caddy）"
   docker compose -f "${COMPOSE_FILE}" up -d --no-deps "${SERVICE}"
 else
-  log "首次部署：启动 bbs-go 与 PostgreSQL"
+  log "首次部署：启动 bbs-go、PostgreSQL 与 Caddy"
   docker compose -f "${COMPOSE_FILE}" up -d
 fi
 
