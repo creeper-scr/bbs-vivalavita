@@ -207,6 +207,12 @@ func getConfigFilePath(configName string) string {
 }
 
 func GetConfigDir() string {
+	// In the Docker image ./bbs-go.yaml is a symlink to /app/data/bbs-go.yaml.
+	// Resolve it so runtime files (setup token, sqlite db, search index) land in
+	// the mounted data directory instead of the container's writable layer.
+	if resolved, err := filepath.EvalSymlinks(configFile); err == nil {
+		return filepath.Dir(resolved)
+	}
 	return filepath.Dir(configFile)
 }
 
